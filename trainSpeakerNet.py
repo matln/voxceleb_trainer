@@ -33,7 +33,7 @@ parser.add_argument("--hard_prob", type=float, default=0.5, help='Hard negative 
 parser.add_argument("--hard_rank", type=int, default=10,    help='Hard negative mining rank in the batch, only for some loss functions');
 parser.add_argument('--margin', type=float,  default=1,     help='Loss margin, only for some loss functions');
 parser.add_argument('--scale', type=float,   default=15,    help='Loss scale, only for some loss functions');
-parser.add_argument('--nSpeakers', type=int, default=6200,  help='Number of speakers in the softmax layer for softmax-based losses, utterances per speaker per iteration for other losses');
+parser.add_argument('--nSpeakers', type=int, default=5994,  help='Number of speakers in the softmax layer for softmax-based losses, utterances per speaker per iteration for other losses');
 
 ## Load and save
 parser.add_argument('--initial_model',  type=str, default="", help='Initial model weights');
@@ -50,18 +50,15 @@ parser.add_argument('--eval', dest='eval', action='store_true', help='Eval only'
 
 ## Model definition
 parser.add_argument('--model', type=str,        default="",     help='Name of model definition');
-parser.add_argument('--encoder', type=str,      default="SAP",  help='Type of encoder');
+parser.add_argument('--encoder_type', type=str, default="SAP",  help='Type of encoder');
 parser.add_argument('--nOut', type=int,         default=512,    help='Embedding size in the last FC layer');
 
 args = parser.parse_args();
 
-# ==================== INITIALISE LINE NOTIFY ====================
-
+## Initialise directories
 model_save_path     = args.save_path+"/model"
 result_save_path    = args.save_path+"/result"
 feat_save_path      = ""
-
-# ==================== MAKE DIRECTORIES ====================
 
 if not(os.path.exists(model_save_path)):
     os.makedirs(model_save_path)
@@ -69,18 +66,14 @@ if not(os.path.exists(model_save_path)):
 if not(os.path.exists(result_save_path)):
     os.makedirs(result_save_path)
 
-# ==================== LOAD MODEL ====================
-
+## Load models
 s = SpeakerNet(**vars(args));
-
-# ==================== EVALUATE LIST ====================
 
 it          = 1;
 prevloss    = float("inf");
 sumloss     = 0;
 
-# ==================== LOAD MODEL PARAMS ====================
-
+## Load model weights
 modelfiles = glob.glob('%s/model0*.model'%model_save_path)
 modelfiles.sort()
 
@@ -96,8 +89,7 @@ for ii in range(0,it-1):
     if ii % args.test_interval == 0:
         clr = s.updateLearningRate(args.lr_decay) 
 
-# ==================== EVAL ====================
-
+## Evaluation code
 if args.eval == True:
         
     sc, lab = s.evaluateFromListSave(args.test_list, print_interval=100, feat_dir=feat_save_path, test_path=args.test_path)
@@ -106,6 +98,7 @@ if args.eval == True:
 
     quit();
 
+## Write args to scorefile
 scorefile = open(result_save_path+"/scores.txt", "a+");
 
 for items in vars(args):
@@ -113,28 +106,24 @@ for items in vars(args):
     scorefile.write('%s %s\n'%(items, vars(args)[items]));
 scorefile.flush()
 
-# ==================== ASSERTION ====================
-
+## Assertion
 gsize_dict  = {'proto':args.nSpeakers, 'triplet':2, 'contrastive':2, 'softmax':1, 'amsoftmax':1, 'aamsoftmax':1, 'ge2e':args.nSpeakers, 'angleproto':args.nSpeakers}
 
 assert args.trainfunc in gsize_dict
 assert gsize_dict[args.trainfunc] <= 100
 
-# ==================== CHECK SPK ====================
-
-## print data stats
+## Initialise data loader
 trainLoader = DatasetLoader(args.train_list, gSize=gsize_dict[args.trainfunc], **vars(args));
 
-## update learning rate
 clr = s.updateLearningRate(1)
 
 while(1):   
     print(time.strftime("%Y-%m-%d %H:%M:%S"), it, "Training %s with LR %f..."%(args.model,max(clr)));
 
+    ## Train network
     loss, traineer = s.train_network(loader=trainLoader);
 
-    # ==================== EVALUATE LIST ====================
-
+    ## Validate and save
     if it % args.test_interval == 0:
 
         print(time.strftime("%Y-%m-%d %H:%M:%S"), it, "Evaluating...");
@@ -142,8 +131,8 @@ while(1):
         sc, lab = s.evaluateFromListSave(args.test_list, print_interval=100, feat_dir=feat_save_path, test_path=args.test_path)
         result = tuneThresholdfromScore(sc, lab, [1, 0.1]);
 
-        print(time.strftime("%Y-%m-%d %H:%M:%S"), "LR %f, TEER %2.2f, TLOSS %f, VEER %2.4f"%( max(clr), traineer, loss, result[1]));
-        scorefile.write("IT %d, LR %f, TEER %2.2f, TLOSS %f, VEER %2.4f\n"%(it, max(clr), traineer, loss, result[1]));
+        print(time.strftime("%Y-%m-%d %H:%M:%S"), "LR %f, TEER/T1 %2.2f, TLOSS %f, VEER %2.4f"%( max(clr), traineer, loss, result[1]));
+        scorefile.write("IT %d, LR %f, TEER/T1 %2.2f, TLOSS %f, VEER %2.4f\n"%(it, max(clr), traineer, loss, result[1]));
 
         scorefile.flush()
 
@@ -161,8 +150,6 @@ while(1):
         scorefile.write("IT %d, LR %f, TEER %2.2f, TLOSS %f\n"%(it, max(clr), traineer, loss));
 
         scorefile.flush()
-
-    # ==================== SAVE MODEL ====================
 
     if it >= args.max_epoch:
         quit();
