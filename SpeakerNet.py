@@ -18,13 +18,16 @@ from loss.pairwise import PairwiseLoss
 
 class SpeakerNet(nn.Module):
 
-    def __init__(self, max_frames, lr = 0.0001, margin = 1, scale = 1, hard_rank = 0, hard_prob = 0, model="alexnet50", nOut = 512, nSpeakers = 1000, optimizer = 'adam', encoder_type = 'SAP', normalize = True, trainfunc='contrastive', **kwargs):
-        super(SpeakerNet, self).__init__();
+    def __init__(self, max_frames, lr = 0.0001, margin = 1, scale = 1, hard_rank = 0, 
+                 hard_prob = 0, model="alexnet50", nOut = 512, nSpeakers = 1000, 
+                 optimizer = 'adam', encoder_type = 'SAP', normalize = True, 
+                 trainfunc='contrastive', **kwargs):
+        super(SpeakerNet, self).__init__()
 
         argsdict = {'nOut': nOut, 'encoder_type':encoder_type}
 
         SpeakerNetModel = importlib.import_module('models.'+model).__getattribute__(model)
-        self.__S__ = SpeakerNetModel(**argsdict).cuda();
+        self.__S__ = SpeakerNetModel(**argsdict).cuda()
 
         if trainfunc == 'angleproto':
             self.__L__ = AngleProtoLoss().cuda()
