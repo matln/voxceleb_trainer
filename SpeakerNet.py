@@ -8,16 +8,10 @@ import numpy, math, pdb, sys, random
 import time, os, itertools, shutil, importlib
 from tuneThreshold import tuneThresholdfromScore
 from DatasetLoader import loadWAV
-from loss.ge2e import GE2ELoss
-from loss.angleproto import AngleProtoLoss
-from loss.cosface import AMSoftmax
-from loss.arcface import AAMSoftmax
-from loss.softmax import SoftmaxLoss
-from loss.protoloss import ProtoLoss
-from loss.pairwise import PairwiseLoss
 
 class SpeakerNet(nn.Module):
 
+<<<<<<< HEAD
     def __init__(self, max_frames, lr = 0.0001, margin = 1, scale = 1, hard_rank = 0, 
                  hard_prob = 0, model="alexnet50", nOut = 512, nSpeakers = 1000, 
                  optimizer = 'adam', encoder_type = 'SAP', normalize = True, 
@@ -72,6 +66,24 @@ class SpeakerNet(nn.Module):
             raise ValueError('Undefined optimizer.')
         
         self.__max_frames__ = max_frames;
+=======
+    def __init__(self, model, optimizer, scheduler, trainfunc, **kwargs):
+        super(SpeakerNet, self).__init__();
+
+        SpeakerNetModel = importlib.import_module('models.'+model).__getattribute__('MainModel')
+        self.__S__ = SpeakerNetModel(**kwargs).cuda();
+
+        LossFunction = importlib.import_module('loss.'+trainfunc).__getattribute__('LossFunction')
+        self.__L__ = LossFunction(**kwargs).cuda();
+
+        Optimizer = importlib.import_module('optimizer.'+optimizer).__getattribute__('Optimizer')
+        self.__optimizer__ = Optimizer(self.parameters(), **kwargs)
+
+        Scheduler = importlib.import_module('scheduler.'+scheduler).__getattribute__('Scheduler')
+        self.__scheduler__, self.lr_step = Scheduler(self.__optimizer__, **kwargs)
+
+        assert self.lr_step in ['epoch', 'iteration']
+>>>>>>> 6d3db45cbe00c27df71d6b04ca5fec0edc5317ac
 
     ## ===== ===== ===== ===== ===== ===== ===== =====
     ## Train network
@@ -88,19 +100,17 @@ class SpeakerNet(nn.Module):
         loss    = 0;
         top1    = 0     # EER or accuracy
 
-        criterion = torch.nn.CrossEntropyLoss()
+        tstart = time.time()
         
         for data, data_label in loader:
 
-            tstart = time.time()
+            data = data.transpose(0,1)
 
             self.zero_grad();
 
             feat = []
             for inp in data:
                 outp      = self.__S__.forward(inp.cuda())
-                if self.__train_normalize__:
-                    outp   = F.normalize(outp, p=2, dim=1)
                 feat.append(outp)
 
             feat = torch.stack(feat,dim=1).squeeze()
@@ -118,68 +128,45 @@ class SpeakerNet(nn.Module):
             self.__optimizer__.step();
 
             telapsed = time.time() - tstart
+            tstart = time.time()
 
-            sys.stdout.write("\rProcessing (%d/%d) "%(index, loader.nFiles));
-            sys.stdout.write("Loss %f EER/T1 %2.3f%% - %.2f Hz "%(loss/counter, top1/counter, stepsize/telapsed));
-            sys.stdout.write("Q:(%d/%d)"%(loader.qsize(), loader.maxQueueSize));
+            sys.stdout.write("\rProcessing (%d) "%(index));
+            sys.stdout.write("Loss %f TEER/TAcc %2.3f%% - %.2f Hz "%(loss/counter, top1/counter, stepsize/telapsed));
             sys.stdout.flush();
+
+            if self.lr_step == 'iteration': self.__scheduler__.step()
+
+        if self.lr_step == 'epoch': self.__scheduler__.step()
 
         sys.stdout.write("\n");
         
         return (loss/counter, top1/counter);
-
-    ## ===== ===== ===== ===== ===== ===== ===== =====
-    ## Read data from list
-    ## ===== ===== ===== ===== ===== ===== ===== =====
-
-    def readDataFromList(self, listfilename):
-
-        data_list = {};
-
-        with open(listfilename) as listfile:
-            while True:
-                line = listfile.readline();
-                if not line:
-                    break;
-
-                data = line.split();
-                filename = data[1];
-                speaker_name = data[0]
-
-                if not (speaker_name in data_list):
-                    data_list[speaker_name] = [];
-                data_list[speaker_name].append(filename);
-
-        return data_list
 
 
     ## ===== ===== ===== ===== ===== ===== ===== =====
     ## Evaluate from list
     ## ===== ===== ===== ===== ===== ===== ===== =====
 
-    def evaluateFromListSave(self, listfilename, print_interval=5000, feat_dir='', test_path='', num_eval=10):
+    def evaluateFromList(self, listfilename, print_interval=100, test_path='', num_eval=10, eval_frames=None):
         
         self.eval();
         
         lines       = []
         files       = []
-        filedict    = {}
         feats       = {}
         tstart      = time.time()
-
-        if feat_dir != '':
-            print('Saving temporary files to %s'%feat_dir)
-            if not(os.path.exists(feat_dir)):
-                os.makedirs(feat_dir)
 
         ## Read all lines
         with open(listfilename) as listfile:
             while True:
                 line = listfile.readline();
-                if (not line): #  or (len(all_scores)==1000) 
+                if (not line):
                     break;
 
                 data = line.split();
+
+                ## Append random label if missing
+                if len(data) == 2: data = [random.randint(0,1)] + data
 
                 files.append(data[1])
                 files.append(data[2])
@@ -191,26 +178,23 @@ class SpeakerNet(nn.Module):
         ## Save all features to file
         for idx, file in enumerate(setfiles):
 
-            inp1 = loadWAV(os.path.join(test_path,file), self.__max_frames__, evalmode=True, num_eval=num_eval).cuda()
+            inp1 = torch.FloatTensor(loadWAV(os.path.join(test_path,file), eval_frames, evalmode=True, num_eval=num_eval)).cuda()
 
             ref_feat = self.__S__.forward(inp1).detach().cpu()
 
             filename = '%06d.wav'%idx
 
-            if feat_dir == '':
-                feats[file]     = ref_feat
-            else:
-                filedict[file]  = filename
-                torch.save(ref_feat,os.path.join(feat_dir,filename))
+            feats[file]     = ref_feat
 
             telapsed = time.time() - tstart
 
             if idx % print_interval == 0:
-                sys.stdout.write("\rReading %d: %.2f Hz, embed size %d"%(idx,idx/telapsed,ref_feat.size()[1]));
+                sys.stdout.write("\rReading %d of %d: %.2f Hz, embedding size %d"%(idx,len(setfiles),idx/telapsed,ref_feat.size()[1]));
 
         print('')
         all_scores = [];
         all_labels = [];
+        all_trials = [];
         tstart = time.time()
 
         ## Read files and compute all scores
@@ -218,50 +202,32 @@ class SpeakerNet(nn.Module):
 
             data = line.split();
 
-            if feat_dir == '':
-                ref_feat = feats[data[1]].cuda()
-                com_feat = feats[data[2]].cuda()
-            else:
-                ref_feat = torch.load(os.path.join(feat_dir,filedict[data[1]])).cuda()
-                com_feat = torch.load(os.path.join(feat_dir,filedict[data[2]])).cuda()
+            ## Append random label if missing
+            if len(data) == 2: data = [random.randint(0,1)] + data
 
-            if self.__test_normalize__:
+            ref_feat = feats[data[1]].cuda()
+            com_feat = feats[data[2]].cuda()
+
+            if self.__L__.test_normalize:
                 ref_feat = F.normalize(ref_feat, p=2, dim=1)
                 com_feat = F.normalize(com_feat, p=2, dim=1)
 
-            dist = F.pairwise_distance(ref_feat.unsqueeze(-1).expand(-1,-1,num_eval), com_feat.unsqueeze(-1).expand(-1,-1,num_eval).transpose(0,2)).detach().cpu().numpy();
+            dist = F.pairwise_distance(ref_feat.unsqueeze(-1), com_feat.unsqueeze(-1).transpose(0,2)).detach().cpu().numpy();
 
             score = -1 * numpy.mean(dist);
 
             all_scores.append(score);  
             all_labels.append(int(data[0]));
+            all_trials.append(data[1]+" "+data[2])
 
             if idx % print_interval == 0:
                 telapsed = time.time() - tstart
-                sys.stdout.write("\rComputing %d: %.2f Hz"%(idx,idx/telapsed));
+                sys.stdout.write("\rComputing %d of %d: %.2f Hz"%(idx,len(lines),idx/telapsed));
                 sys.stdout.flush();
-
-        if feat_dir != '':
-            print(' Deleting temporary files.')
-            shutil.rmtree(feat_dir)
 
         print('\n')
 
-        return (all_scores, all_labels);
-
-
-    ## ===== ===== ===== ===== ===== ===== ===== =====
-    ## Update learning rate
-    ## ===== ===== ===== ===== ===== ===== ===== =====
-
-    def updateLearningRate(self, alpha):
-
-        learning_rate = []
-        for param_group in self.__optimizer__.param_groups:
-            param_group['lr'] = param_group['lr']*alpha
-            learning_rate.append(param_group['lr'])
-
-        return learning_rate;
+        return (all_scores, all_labels, all_trials);
 
 
     ## ===== ===== ===== ===== ===== ===== ===== =====

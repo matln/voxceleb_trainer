@@ -8,13 +8,14 @@ from torch.nn import Parameter
 from models.ResNetBlocks import *
 
 class ResNetSE(nn.Module):
-    def __init__(self, block, layers, num_filters, nOut, encoder_type='SAP', **kwargs):
+    def __init__(self, block, layers, num_filters, nOut, encoder_type='SAP', log_input=False, **kwargs):
+        super(ResNetSE, self).__init__()
 
         print('Embedding size is %d, encoder %s.'%(nOut, encoder_type))
         
         self.inplanes = num_filters[0]
         self.encoder_type = encoder_type
-        super(ResNetSE, self).__init__()
+        self.log_input    = log_input
 
         self.conv1 = nn.Conv2d(1, num_filters[0] , kernel_size=7, stride=(2, 1), padding=3,
                                bias=False)
@@ -26,8 +27,6 @@ class ResNetSE(nn.Module):
         self.layer2 = self._make_layer(block, num_filters[1], layers[1], stride=(2, 2))
         self.layer3 = self._make_layer(block, num_filters[2], layers[2], stride=(2, 2))
         self.layer4 = self._make_layer(block, num_filters[3], layers[3], stride=(2, 2))
-
-        self.avgpool = nn.AvgPool2d((9, 1), stride=1)
 
         self.instancenorm = nn.InstanceNorm1d(257)
 
@@ -71,10 +70,12 @@ class ResNetSE(nn.Module):
 
     def forward(self, x):
 
-        stft = torch.stft(x, 512, hop_length=int(0.01*16000), win_length=int(0.025*16000), window=torch.hann_window(int(0.025*16000)), center=False, normalized=False, onesided=True)
-        stft = (stft[:,:,:,0].pow(2)+stft[:,:,:,1].pow(2)).pow(0.5)
+        x = torch.stft(x, 512, hop_length=int(0.01*16000), win_length=int(0.025*16000), window=torch.hann_window(int(0.025*16000)), center=False, normalized=False, onesided=True)
+        x = (x[:,:,:,0].pow(2)+x[:,:,:,1].pow(2)).pow(0.5)
 
-        x = self.instancenorm(stft).unsqueeze(1).detach()
+        if self.log_input: x = x.log()
+
+        x = self.instancenorm(x).unsqueeze(1).detach()
 
         x = self.conv1(x)
         x = self.bn1(x)
@@ -85,7 +86,8 @@ class ResNetSE(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-        x = self.avgpool(x)
+        
+        x = torch.mean(x, dim=2, keepdim=True)
 
         if self.encoder_type == "SAP":
             x = x.permute(0, 2, 1, 3)
@@ -103,7 +105,7 @@ class ResNetSE(nn.Module):
 
         return x
 
-def ResNetSE34(nOut=256, **kwargs):
+def MainModel(nOut=256, **kwargs):
     # Number of filters
     num_filters = [16, 32, 64, 128]
     model = ResNetSE(SEBasicBlock, [3, 4, 6, 3], num_filters, nOut, **kwargs)
